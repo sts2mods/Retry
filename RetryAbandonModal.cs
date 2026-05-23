@@ -121,16 +121,27 @@ public static class RetryAbandonModal
         // no signal connections — our Released handler is the only one.
         const int dupFlags = (int)(Node.DuplicateFlags.Groups | Node.DuplicateFlags.Scripts | Node.DuplicateFlags.UseInstantiation);
         var dup = (NPopupYesNoButton)src.Duplicate(dupFlags);
+
+        // Clone any Material BEFORE AddChild — NPopupYesNoButton._Ready
+        // caches `_hsv = _image.GetMaterial()` and later OnFocus
+        // mutates `_hsv` directly. If we clone after AddChild, _Ready
+        // has already captured the original-shared material reference,
+        // so hovering the dup still mutates the source button's
+        // brightness (and vice versa). Cloning first means _Ready
+        // captures the unique cloned material.
+        CloneMaterials(dup);
+
         var parent = src.GetParent();
         parent.AddChild(dup);
 
-        // Place to the right of YesButton with a small gap. Both
-        // buttons in NVerticalPopup are anchored, so we anchor the
-        // dup the same way and offset.
+        // Place ABOVE the YesButton (inside the popup) so it doesn't
+        // hang off the right edge of the panel. Y offset is the
+        // button's own height plus a small gap.
         dup.Name = "AbandonNoSaveButton";
         dup.IsYes = true;
         dup.SetText("Abandon (no save)");
-        dup.Position = src.Position + new Vector2(src.Size.X + 30f, 0f);
+        float buttonH = src.Size.Y > 0 ? src.Size.Y : 70f;
+        dup.Position = src.Position + new Vector2(0f, -(buttonH + 20f));
         dup.Visible = true;
 
         bool armed = false;
@@ -156,5 +167,16 @@ public static class RetryAbandonModal
                 NModalContainer.Instance.Clear();
             }
         }));
+    }
+
+    // Recursively unique-ify any Material reference under `root` so
+    // the duplicated subtree doesn't share shader-uniform state with
+    // the source it was cloned from.
+    private static void CloneMaterials(Node root)
+    {
+        if (root is CanvasItem ci && ci.Material != null)
+            ci.Material = (Material)ci.Material.Duplicate();
+        foreach (var child in root.GetChildren())
+            CloneMaterials(child);
     }
 }
