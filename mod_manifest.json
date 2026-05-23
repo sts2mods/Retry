@@ -1,0 +1,10 @@
+{
+  "id": "Retry",
+  "name": "Retry",
+  "author": "austin",
+  "description": "Click any node on a past run in the run history to resume that run from that point — fresh seed-matched custom run with your deck, relics, HP, and gold restored.",
+  "version": "0.1.0",
+  "has_pck": false,
+  "has_dll": true,
+  "affects_gameplay": true
+}
