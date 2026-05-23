@@ -255,45 +255,54 @@ public static class NActMapBrowser
         }
     }
 
-    private static void ScheduleDiagDump()
-    {
-        if (!Active) return;
-        var tree = (SceneTree)Engine.GetMainLoop();
-        var timer = tree.CreateTimer(2.0);
-        timer.Connect("timeout", Callable.From(() => {
-            if (!Active) return;
-            BrowserDiagnostics.DumpState();
-            ScheduleDiagDump();
-        }));
-    }
-
     public static void Close()
     {
+        // Always flip Active off first — if any step below hangs or
+        // throws, we don't want a stale Active=true blocking future
+        // Opens or making the browser think it's still up.
+        bool wasActive = Active;
+        Active = false;
+        long t0 = System.Environment.TickCount64;
+        long step;
+
         try
         {
-            if (!Active && _overlay == null) return;
-            Active = false;
+            if (!wasActive && _overlay == null) return;
 
-            // Tear down the NRun overlay (and HUD child).
-            if (_overlay != null && GodotObject.IsInstanceValid(_overlay))
-                _overlay.QueueFreeSafely();
+            // Per-step timing so if Close hangs (e.g. beachball after
+            // a long session on view-acts) we know which call is the
+            // culprit. Free the overlay first since its _ExitTree
+            // cascade is usually the heaviest piece.
+            step = System.Environment.TickCount64;
+            try
+            {
+                if (_overlay != null && GodotObject.IsInstanceValid(_overlay))
+                    _overlay.QueueFreeSafely();
+            }
+            catch (Exception ex) { GD.PrintErr($"{RetryMod.LogPrefix}Close overlay free: {ex.Message}"); }
+            GD.Print($"{RetryMod.LogPrefix}Close step overlay-free {System.Environment.TickCount64 - step}ms");
             _hud = null;
             _overlay = null;
             SpawnedNRun = null;
 
+            step = System.Environment.TickCount64;
             try { RunManager.Instance.CleanUp(graceful: false); }
-            catch (Exception ex) { GD.PrintErr($"{RetryMod.LogPrefix}browser CleanUp: {ex.Message}"); }
+            catch (Exception ex) { GD.PrintErr($"{RetryMod.LogPrefix}Close CleanUp: {ex.Message}"); }
+            GD.Print($"{RetryMod.LogPrefix}Close step CleanUp {System.Environment.TickCount64 - step}ms");
 
-            // Restore the menu's input processing and re-show the
-            // active submenu — its OnScreenVisibilityChange fires the
-            // natural slide-in animation for the back button.
-            if (_hiddenMenu != null && GodotObject.IsInstanceValid(_hiddenMenu))
+            step = System.Environment.TickCount64;
+            try
             {
-                _hiddenMenu.ProcessMode = Node.ProcessModeEnum.Inherit;
-                _hiddenMenu.MouseFilter = Control.MouseFilterEnum.Stop;
-                if (_activeSubmenu != null && GodotObject.IsInstanceValid(_activeSubmenu))
-                    _activeSubmenu.Visible = true;
+                if (_hiddenMenu != null && GodotObject.IsInstanceValid(_hiddenMenu))
+                {
+                    _hiddenMenu.ProcessMode = Node.ProcessModeEnum.Inherit;
+                    _hiddenMenu.MouseFilter = Control.MouseFilterEnum.Stop;
+                    if (_activeSubmenu != null && GodotObject.IsInstanceValid(_activeSubmenu))
+                        _activeSubmenu.Visible = true;
+                }
             }
+            catch (Exception ex) { GD.PrintErr($"{RetryMod.LogPrefix}Close menu restore: {ex.Message}"); }
+            GD.Print($"{RetryMod.LogPrefix}Close step menu-restore {System.Environment.TickCount64 - step}ms");
             _activeSubmenu = null;
             _hiddenMenu = null;
 
@@ -302,8 +311,6 @@ public static class NActMapBrowser
             // returning null.
             MegaCrit.Sts2.Core.Context.LocalContext.NetId = _savedLocalNetId;
             _savedLocalNetId = null;
-            // Disable the NetService.NetId override so the next real
-            // run reads the genuine SP NetId (1uL).
             NetServiceNetIdOverride = null;
 
             _poppedSubmenus.Clear();
@@ -312,7 +319,7 @@ public static class NActMapBrowser
             _runState = null;
             _actMaps = null;
             _actVisited = null;
-            GD.Print($"{RetryMod.LogPrefix}browser Close: done (menu restored)");
+            GD.Print($"{RetryMod.LogPrefix}browser Close: done in {System.Environment.TickCount64 - t0}ms");
         }
         catch (Exception ex)
         {
