@@ -2,6 +2,27 @@
 
 This is a mod to let you start a custom run from any node on a run from your run history.  Have you ever thought 'damn I died but I want to see what could have happened if I chose a different path there?', now you can.  A couple things, its not a perfect recreation as if you played the exact same way on a custom run up to that point, things like the deck cycle are rolling counts that continue adding on every combat, and that is not saved in your game save(it could be added as a feature for runs that you play with the mod active, but it cannot ever work for previous runs since the data just isn't there, unless i'm just dumb and missing something).  You can enter from the end of a failed run, or from the run history page in the compendium(this pairs well with my run table mod which lets you search for runs and filter by different things to get a nice table view of the runs).  It can also be accessed from within a run and will abandon your current run if you choose to start a new one.
 
+view acts button on death screen:
+
+<img width="1512" height="861" alt="Screenshot 2026-05-23 at 12 47 49 PM" src="https://github.com/user-attachments/assets/b0279e6b-1dd2-4df0-b3c4-95ae6dd1cd7f" />
+
+clicking that button opens up the act screen
+
+<img width="1512" height="860" alt="Screenshot 2026-05-23 at 1 46 04 PM" src="https://github.com/user-attachments/assets/75c9758d-608a-4980-b549-067cd72dbe51" />
+
+you can select between any of the acts you played and selecting a node highlights it like so:
+
+<img width="1511" height="854" alt="Screenshot 2026-05-23 at 1 46 23 PM" src="https://github.com/user-attachments/assets/117dc54e-f1e5-488d-8b66-5005603f3743" />
+
+you can also see the view acts button from the run history page for that run
+
+<img width="1508" height="853" alt="Screenshot 2026-05-23 at 2 04 31 PM" src="https://github.com/user-attachments/assets/c94c4331-19e4-4157-889d-52aac0112887" />
+
+you are also able to retry from the nodes on the run history page directly, and here is the abandon run popup that comes up if you have a run currently in progress.  I added abandon without creating a save in case you just jumped in to look at something really quick but you dont want to clog up your run history with a ton of useless duplicate runs.
+
+<img width="1511" height="866" alt="Screenshot 2026-05-23 at 2 12 39 PM" src="https://github.com/user-attachments/assets/5161c932-8ea4-4b2a-86a8-e11c890c9b4d" />
+
+
 If you have suggestions or bug reports add them as issues here and I can get to them.
 
 
