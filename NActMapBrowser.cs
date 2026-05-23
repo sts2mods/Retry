@@ -86,9 +86,13 @@ public static class NActMapBrowser
             if (_runState == null) return;
 
             _runState.ExtraFields.StartedWithNeow = true;
-            SetCurrentActIndex(0);
-            _runState.Map = _actMaps![0]!;
-            ReplaceVisitedCoords(_actVisited![0]);
+            // Open to the most recent act (where the run ended)
+            // instead of always Act 1. AfterRunReady will call
+            // ShowAct(initialAct) once the NRun scene is up.
+            int initialAct = Math.Max(0, _history.MapPointHistory.Count - 1);
+            SetCurrentActIndex(initialAct);
+            _runState.Map = _actMaps![initialAct]!;
+            ReplaceVisitedCoords(_actVisited![initialAct]);
 
             RunManager.Instance.Launch();
 
@@ -145,7 +149,10 @@ public static class NActMapBrowser
     {
         try
         {
-            ShowAct(0);
+            int initialAct = _history != null
+                ? Math.Max(0, _history.MapPointHistory.Count - 1)
+                : 0;
+            ShowAct(initialAct);
             // Seed the preview with the run's final state so the
             // top-bar relics / HP / gold reflect where the run ended,
             // not the character's starting kit. The user can then click
@@ -493,8 +500,6 @@ public static class NActMapBrowser
         if (_history == null || _runState == null) return;
         if (_actMaps == null || actIdx >= _actMaps.Length || _actMaps[actIdx] == null) return;
         _currentAct = actIdx;
-        // Clear previous-act node selection — coord refers to coord
-        // within the act, which is meaningless once we've switched.
         _pendingCoord = null;
 
         SetCurrentActIndex(actIdx);
@@ -506,10 +511,13 @@ public static class NActMapBrowser
         if (ms == null) { GD.PrintErr($"{RetryMod.LogPrefix}browser ShowAct: NMapScreen.Instance null"); return; }
         try
         {
-            // Skip start-of-act anim → CanScroll() returns true.
+            // Clear stale _bossPointNode / _secondBossPointNode /
+            // _startingPointNode references before SetMap — preventing
+            // the disposed-object NRE on repeat tab clicks.
+            NullStalePointNodes(ms);
+
             SetHasPlayedAnimation(ms, true);
             ms.SetMap(map, _runState.Rng.Seed, clearDrawings: true);
-            // Allow clicks on Traveled (visited) nodes.
             ms.SetDebugTravelEnabled(true);
             ms.SetTravelEnabled(true);
 
@@ -517,9 +525,20 @@ public static class NActMapBrowser
             if (visited.Count > 0) ms.InitMarker(visited[visited.Count - 1]);
 
             RefreshMapBg(ms);
-            ms.Open(isOpenedFromTopBar: true);
+            if (!ms.IsOpen) ms.Open(isOpenedFromTopBar: true);
+            ForceRecalculateTravelability(ms);
 
-            // Update tab highlights.
+            // Scroll target: the last visited node's row. For a
+            // completed act that's the boss (top of the map); for
+            // the death act that's the floor the player died on.
+            // Open's else branch only scrolled for the first open
+            // (and used CurrentMapCoord which we don't set), so we
+            // do this explicitly on every ShowAct.
+            if (visited.Count > 0)
+                ScrollToRow(ms, visited[visited.Count - 1].row);
+            else
+                ScrollToRow(ms, 0);
+
             if (_hud != null) UpdateTabHighlights();
             GD.Print($"{RetryMod.LogPrefix}browser act {actIdx}: SetMap done");
         }
@@ -536,16 +555,122 @@ public static class NActMapBrowser
         f?.SetValue(ms, v);
     }
 
+    // Replace bg textures for the current act. NMapBg.OnVisibilityChanged
+    // is the game's only path that does this, and triggering it via
+    // a Visible=false/true toggle is timing-fragile (the signal can
+    // fire in the wrong order when ms.Open later changes visibility,
+    // so the bg sometimes resolved to the previous act). Setting the
+    // private TextureRect fields directly is deterministic.
+    private static readonly FieldInfo? _mapBgContainerField =
+        typeof(NMapScreen).GetField("_mapBgContainer",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
     private static void RefreshMapBg(NMapScreen ms)
     {
-        var f = typeof(NMapScreen).GetField("_mapBgContainer",
+        if (_runState == null) return;
+        if (_mapBgContainerField?.GetValue(ms) is not Control bg) return;
+
+        var act = _runState.Act;
+        if (act == null) return;
+
+        var bgType = bg.GetType();
+        var bf = BindingFlags.Instance | BindingFlags.NonPublic;
+        var top = bgType.GetField("_mapTop", bf)?.GetValue(bg) as TextureRect;
+        var mid = bgType.GetField("_mapMid", bf)?.GetValue(bg) as TextureRect;
+        var bot = bgType.GetField("_mapBot", bf)?.GetValue(bg) as TextureRect;
+        if (top != null) top.Texture = act.MapTopBg;
+        if (mid != null) mid.Texture = act.MapMidBg;
+        if (bot != null) bot.Texture = act.MapBotBg;
+    }
+
+    // Scroll the map so the most-recent visited node is centered.
+    // For completed acts (last visited == boss row), that's the top
+    // of the map; for the death act, it's wherever the player died.
+    // Uses the same math Open's else branch uses for its initial
+    // scroll: position.Y = -600 + row * _distY.
+    private static readonly FieldInfo? _mapContainerField =
+        typeof(NMapScreen).GetField("_mapContainer",
             BindingFlags.Instance | BindingFlags.NonPublic);
-        if (f?.GetValue(ms) is Control bg)
+    private static readonly FieldInfo? _targetDragPosField =
+        typeof(NMapScreen).GetField("_targetDragPos",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+    private static readonly FieldInfo? _distYField =
+        typeof(NMapScreen).GetField("_distY",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+    private static void ScrollToRow(NMapScreen ms, int row)
+    {
+        try
         {
-            // Toggle visibility to re-trigger OnVisibilityChanged →
-            // reloads MapTopBg / MapMidBg / MapBotBg for the new act.
-            bg.Visible = false;
-            bg.Visible = true;
+            if (_distYField?.GetValue(ms) is not float distY) return;
+            float y = -600f + row * distY;
+            if (_mapContainerField?.GetValue(ms) is Control mc)
+                mc.Position = new Vector2(mc.Position.X, y);
+            if (_targetDragPosField != null)
+                _targetDragPosField.SetValue(ms, new Vector2(0f, y));
+        }
+        catch (Exception ex) { GD.PrintErr($"{RetryMod.LogPrefix}ScrollToRow: {ex.Message}"); }
+    }
+
+    // Null out the special point-node fields before each SetMap so
+    // the game's SetMap doesn't access a stale-disposed reference
+    // via the field. SetMap queues `_bossPointNode?.QueueFreeSafely()`
+    // etc., but the field still points at the disposed instance for
+    // a window, and across multiple act-switches that stale ref
+    // surfaces as `Cannot access a disposed object (NBossMapPoint)`
+    // inside SetMap's focus-neighbor GetPath() block. The actual
+    // node children are still cleaned up by `_points.FreeChildren()`
+    // since they remain in the tree until that runs.
+    private static readonly FieldInfo? _bossPointNodeField =
+        typeof(NMapScreen).GetField("_bossPointNode",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+    private static readonly FieldInfo? _secondBossPointNodeField =
+        typeof(NMapScreen).GetField("_secondBossPointNode",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+    private static readonly FieldInfo? _startingPointNodeField =
+        typeof(NMapScreen).GetField("_startingPointNode",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+    private static void NullStalePointNodes(NMapScreen ms)
+    {
+        try
+        {
+            // Queue free any still-valid stale node first, then null
+            // the field. Skipping the QueueFree on already-disposed
+            // refs avoids re-disposal exceptions.
+            foreach (var f in new[] { _bossPointNodeField, _secondBossPointNodeField, _startingPointNodeField })
+            {
+                if (f?.GetValue(ms) is Node n && GodotObject.IsInstanceValid(n))
+                    n.QueueFreeSafely();
+                f?.SetValue(ms, null);
+            }
+        }
+        catch (Exception ex) { GD.PrintErr($"{RetryMod.LogPrefix}NullStalePointNodes: {ex.Message}"); }
+    }
+
+    // SetMap's tail does
+    //     if (IsVisible()) { RecalculateTravelability(); RefreshAllPointVisuals(); }
+    // — but on repeat clicks the screen can transiently be invisible
+    // at SetMap time (Open hasn't run yet), so neither call fires and
+    // we end up with all map points stuck at the default Untravelable
+    // state: no visited-circle markers, no clickable nodes. Calling
+    // RecalculateTravelability explicitly afterwards makes the screen
+    // state independent of whatever visibility flicker the open path
+    // produced.
+    private static readonly MethodInfo? _recalcTravelabilityMethod =
+        typeof(NMapScreen).GetMethod("RecalculateTravelability",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+    private static void ForceRecalculateTravelability(NMapScreen ms)
+    {
+        try
+        {
+            _recalcTravelabilityMethod?.Invoke(ms, null);
+            ms.RefreshAllPointVisuals();
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"{RetryMod.LogPrefix}force recalc travel: {ex.Message}");
         }
     }
 
@@ -1032,8 +1157,27 @@ public static class NActMapBrowser
             var pots = SpawnedNRun?.GlobalUi?.TopBar?.PotionContainer;
             if (pots != null && _runState != null)
             {
-                foreach (var c in pots.GetChildren())
-                    if (GodotObject.IsInstanceValid(c)) c.QueueFreeSafely();
+                // NPotionContainer keeps holders as children of a sub-
+                // Control (_potionHolders = MarginContainer/PotionHolders)
+                // AND tracks them in a private _holders list. Clearing
+                // children of NPotionContainer itself doesn't touch
+                // either, so re-Initialize would see _holders.Count >=
+                // MaxPotionCount and GrowPotionHolders becomes a no-op
+                // — net effect was zero visible holders. Reset both
+                // via reflection before Initialize.
+                var ptype = typeof(MegaCrit.Sts2.Core.Nodes.Potions.NPotionContainer);
+                var bf = BindingFlags.Instance | BindingFlags.NonPublic;
+                if (ptype.GetField("_potionHolders", bf)?.GetValue(pots)
+                    is Control holdersParent)
+                {
+                    foreach (var ch in holdersParent.GetChildren())
+                        if (GodotObject.IsInstanceValid(ch)) ch.QueueFreeSafely();
+                }
+                if (ptype.GetField("_holders", bf)?.GetValue(pots)
+                    is System.Collections.IList holderList)
+                {
+                    holderList.Clear();
+                }
                 pots.Initialize(_runState);
             }
         }

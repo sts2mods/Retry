@@ -134,13 +134,40 @@ public static class NRunHistory_Ready_Patch
                 return;
             }
             var player = history.Players[0];
-            // Defer to next idle frame — opening synchronously inside
-            // the button's Pressed handler means we AddChild a fullscreen
-            // Control while Godot is mid-way through dispatching the
-            // click event, which leaves the GUI input router unable to
-            // route subsequent events to the new NMapScreen.
             var capturedHistory = history;
             var capturedPlayer = player;
+
+            // Mid-run: opening the browser as an overlay while a live
+            // NRun is still mounted produces NREs in NMapScreen.SetMap
+            // (two NRuns fight for singletons). Prompt to abandon
+            // upfront; on a non-cancel choice, tear the live run
+            // down and run through the shared "transition to menu +
+            // open browser" flow (same path the game-over banner
+            // uses). The browser then lands cleanly on the
+            // NRunHistory submenu state.
+            if (RunManager.Instance?.IsInProgress == true)
+            {
+                RetryAbandonModal.Show(
+                    title: "Abandon current run?",
+                    body: "Viewing acts of another run requires ending your in-progress run.",
+                    onChoice: c =>
+                    {
+                        if (c == RetryAbandonModal.Choice.Cancel) return;
+                        RetryRunner.PerformAbandon(
+                            writeHistory: c == RetryAbandonModal.Choice.AbandonSave,
+                            inProgress: true);
+                        _ = BrowserViaMainMenu.OpenAsync(capturedHistory, capturedPlayer);
+                    });
+                GD.Print($"{RetryMod.LogPrefix}view acts: mid-run abandon prompt shown for seed={history.Seed}");
+                return;
+            }
+
+            // Menu case: defer to next idle frame — opening synchronously
+            // inside the button's Pressed handler means we AddChild a
+            // fullscreen Control while Godot is mid-way through
+            // dispatching the click event, which leaves the GUI input
+            // router unable to route subsequent events to the new
+            // NMapScreen.
             Callable.From(() => NActMapBrowser.Open(capturedHistory, capturedPlayer)).CallDeferred();
             GD.Print($"{RetryMod.LogPrefix}opened act map browser for seed={history.Seed} (deferred)");
         }

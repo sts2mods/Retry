@@ -91,90 +91,25 @@ public static class NGameOverScreen_Ready_Patch
         }
     }
 
-    // End up in the exact same state as if the player had clicked
-    // Main Menu → Compendium → Run History → this run → View Acts,
-    // but with the visible transition: game-over → black → browser.
-    //
-    // Sequence (everything between FadeOut and Open is behind the
-    // black NTransition overlay, so no menu flash):
-    //   1. Transition.FadeOut(0.2s) — cover the game-over screen
-    //   2. RunManager.CleanUp(graceful: false) — drop run state
-    //      (so the just-finished run isn't in-progress anymore)
-    //   3. SaveManager.DeleteCurrentRun — kill the disk save so
-    //      RetryRunner.Begin's hasSave check returns false. Without
-    //      this the retry click pops the abandon modal which the
-    //      user shouldn't need to see; OnEnded usually deletes the
-    //      save but doesn't if the screen popped before that ran.
-    //   4. SetCurrentScene(NMainMenu.Create()) — switch scene
-    //   5. PushSubmenuType<NRunHistory>() on NMainMenu.SubmenuStack —
-    //      its OnSubmenuOpened auto-selects index 0 (latest run = the
-    //      just-finished one). This is the same submenu state as
-    //      manual navigation, so the browser's back button restores
-    //      to it cleanly.
-    //   6. NActMapBrowser.Open(history, player) — browser overlay
-    //      covers the still-faded screen
-    //   7. Transition.FadeIn(0.3s) fire-and-forget — clears the fade
-    //      behind the browser so the user lands on a clean menu when
-    //      they back out. NMainMenu._Ready also queues its own
-    //      FadeIn(3f), but ours wins (kills the slower tween).
+    // Game-over case: the run has ended but the state isn't torn
+    // down yet (game-over screen renders on top of the live NRun).
+    // Clean up first, then run through the shared transition that
+    // ends with the browser open over a fresh NMainMenu + NRunHistory.
     private static async System.Threading.Tasks.Task OpenViaMainMenuAsync(
         RunHistory history,
         RunHistoryPlayer player)
     {
         try
         {
-            var ng = MegaCrit.Sts2.Core.Nodes.NGame.Instance;
-            if (ng == null)
-            {
-                GD.PrintErr($"{RetryMod.LogPrefix}game over banner: NGame.Instance null");
-                return;
-            }
-
-            // 1) Quick fade-out to cover the upcoming scene swap.
-            try { await ng.Transition.FadeOut(0.2f); }
-            catch (Exception ex) { GD.PrintErr($"{RetryMod.LogPrefix}game over banner FadeOut: {ex.Message}"); }
-
-            // 2) Drop the in-progress run state.
+            // Drop the in-progress run state and kill any disk save so
+            // RetryRunner's hasSave guard doesn't pop a second modal
+            // when the user confirms a retry from the browser.
             try { RunManager.Instance?.CleanUp(graceful: false); }
             catch (Exception ex) { GD.PrintErr($"{RetryMod.LogPrefix}game over banner CleanUp: {ex.Message}"); }
-
-            // 3) Make sure no disk save lingers — otherwise
-            //    RetryRunner.Begin's hasSave guard pops the abandon
-            //    modal on confirm, which is invisible behind our
-            //    overlay and looks like "confirm does nothing".
             try { MegaCrit.Sts2.Core.Saves.SaveManager.Instance?.DeleteCurrentRun(); }
             catch (Exception ex) { GD.PrintErr($"{RetryMod.LogPrefix}game over banner DeleteCurrentRun: {ex.Message}"); }
 
-            // 4) Switch the scene to NMainMenu.
-            try
-            {
-                var menuScene = MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NMainMenu.Create(openTimeline: false);
-                ng.RootSceneContainer?.SetCurrentScene(menuScene);
-            }
-            catch (Exception ex) { GD.PrintErr($"{RetryMod.LogPrefix}game over banner SetCurrentScene: {ex.Message}"); }
-
-            // Give NMainMenu's _Ready a tick to wire itself up.
-            await ng.ToSignal(ng.GetTree(), Godot.SceneTree.SignalName.ProcessFrame);
-
-            // 5) Push NRunHistory; its OnSubmenuOpened auto-selects
-            //    the most recent (just-finished) run.
-            if (ng.RootSceneContainer?.CurrentScene
-                is MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NMainMenu menu
-                && menu.SubmenuStack != null)
-            {
-                try { menu.SubmenuStack.PushSubmenuType<MegaCrit.Sts2.Core.Nodes.Screens.RunHistoryScreen.NRunHistory>(); }
-                catch (Exception ex) { GD.PrintErr($"{RetryMod.LogPrefix}game over banner submenu push: {ex.Message}"); }
-            }
-            await ng.ToSignal(ng.GetTree(), Godot.SceneTree.SignalName.ProcessFrame);
-
-            // 6) Browser on top of still-faded screen — user only
-            //    sees the browser.
-            GD.Print($"{RetryMod.LogPrefix}game over banner: opening browser for seed={history.Seed}");
-            NActMapBrowser.Open(history, player);
-
-            // 7) Drop the fade behind the browser (fire-and-forget).
-            //    When the user backs out the menu is already clear.
-            _ = ng.Transition.FadeIn(0.3f);
+            await BrowserViaMainMenu.OpenAsync(history, player);
         }
         catch (Exception ex)
         {
