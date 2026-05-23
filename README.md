@@ -89,8 +89,9 @@ Requires .NET 9 SDK and a local copy of Slay the Spire 2.
 The build script compiles `Retry.dll` and copies it + the manifest into
 your game's `mods/` folder.
 
-## Companion mods
+## All my STS2 mods
 
+- [Retry](https://github.com/sts2mods/Retry) — this mod.
 - [Run Table](https://github.com/sts2mods/RunTable) — searchable table
   of your past runs. Pairs with Retry: find a run in the table, click
   in, click View Acts, replay any floor.
